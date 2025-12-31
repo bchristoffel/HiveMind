@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { useNotes } from "../storage/useNotes";
+import { useNotesContext } from "../src/context/NotesContext";
 
 export default function DashboardScreen() {
-  const { addNote, clearAll, count } = useNotes();
+  const { addNote, clearAll, notes } = useNotesContext();
   const [text, setText] = useState("");
 
   const canSave = useMemo(() => text.trim().length > 0, [text]);
+  const count = notes.length;
 
   const onSave = () => {
     if (!canSave) return;
@@ -16,21 +17,21 @@ export default function DashboardScreen() {
 
   return (
     <View style={styles.screen}>
-      {/* Briefing (placeholder for now) */}
+      {/* Briefing */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Today’s Context</Text>
-        <Text style={styles.muted}>Next meeting: (coming in Phase 2)</Text>
-        <Text style={styles.muted}>Weather: (later)</Text>
+        <Text style={styles.muted}>Next meeting: (coming soon)</Text>
         <Text style={styles.muted}>Notes captured: {count}</Text>
 
-        <Pressable style={[styles.smallButton, { marginTop: 10 }]} onPress={clearAll}>
-          <Text style={styles.smallButtonText}>Clear All Notes</Text>
+        <Pressable style={styles.smallButton} onPress={clearAll}>
+          <Text style={styles.smallButtonText}>Clear All</Text>
         </Pressable>
       </View>
 
       {/* Capture */}
       <View style={[styles.card, { flex: 1 }]}>
         <Text style={styles.cardTitle}>Braindump</Text>
+
         <TextInput
           value={text}
           onChangeText={setText}
@@ -99,6 +100,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   smallButton: {
+    marginTop: 6,
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
