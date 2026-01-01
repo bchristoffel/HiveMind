@@ -7,7 +7,7 @@ export type Note = {
 
   rawText: string;
 
-  // Future: AI-structured fields
+  // AI-enriched fields (Phase 3+)
   title?: string;
   tags: string[];
   people: string[];

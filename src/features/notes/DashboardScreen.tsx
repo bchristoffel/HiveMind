@@ -3,22 +3,48 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useNotesContext } from "../../context/NotesContext";
 
 export default function DashboardScreen() {
-  const { addNote, notes, clearAll } = useNotesContext();
+  const { addNote, clearAll, notes, processNote } = useNotesContext();
   const [text, setText] = useState("");
 
   const canSave = useMemo(() => text.trim().length > 0, [text]);
+  const count = notes.length;
+
+  const latestDraft = useMemo(() => notes.find((n) => n.status === "draft"), [notes]);
+
+  const onSave = () => {
+    if (!canSave) return;
+    addNote(text);
+    setText("");
+  };
+
+  const onProcessLatest = async () => {
+    if (!latestDraft) return;
+    await processNote(latestDraft.id);
+  };
 
   return (
     <View style={styles.screen}>
+      {/* Briefing */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Today’s Context</Text>
-        <Text style={styles.muted}>Notes captured: {notes.length}</Text>
+        <Text style={styles.muted}>Notes captured: {count}</Text>
 
-        <Pressable style={styles.smallButton} onPress={clearAll}>
-          <Text style={styles.smallButtonText}>Clear All</Text>
-        </Pressable>
+        <View style={styles.row}>
+          <Pressable style={styles.smallButton} onPress={clearAll}>
+            <Text style={styles.smallButtonText}>Clear All</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.smallButton, !latestDraft && { opacity: 0.45 }]}
+            onPress={onProcessLatest}
+            disabled={!latestDraft}
+          >
+            <Text style={styles.smallButtonText}>Process Latest Draft</Text>
+          </Pressable>
+        </View>
       </View>
 
+      {/* Capture */}
       <View style={[styles.card, { flex: 1 }]}>
         <Text style={styles.cardTitle}>Braindump</Text>
 
@@ -33,10 +59,7 @@ export default function DashboardScreen() {
 
         <Pressable
           style={[styles.button, !canSave && styles.buttonDisabled]}
-          onPress={() => {
-            addNote(text);
-            setText("");
-          }}
+          onPress={onSave}
           disabled={!canSave}
         >
           <Text style={styles.buttonText}>Save</Text>
@@ -47,31 +70,37 @@ export default function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, padding: 16, backgroundColor: "#121212" },
-  card: { backgroundColor: "#1E1E1E", borderRadius: 16, padding: 14, marginBottom: 12 },
+  screen: { flex: 1, padding: 16, gap: 12, backgroundColor: "#121212" },
+  card: { backgroundColor: "#1E1E1E", borderRadius: 16, padding: 14, gap: 10 },
   cardTitle: { color: "white", fontSize: 16, fontWeight: "700" },
-  muted: { color: "#bdbdbd", marginTop: 6 },
+  muted: { color: "#bdbdbd", fontSize: 13 },
+  row: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
+
   input: {
+    flex: 1,
     minHeight: 140,
     borderRadius: 14,
     padding: 12,
     backgroundColor: "#171717",
     color: "white",
+    fontSize: 16,
+    textAlignVertical: "top",
   },
   button: {
-    backgroundColor: "#3B82F6",
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
-    marginTop: 10,
+    backgroundColor: "#3B82F6",
   },
-  buttonDisabled: { opacity: 0.4 },
-  buttonText: { color: "white", fontWeight: "700" },
+  buttonDisabled: { opacity: 0.45 },
+  buttonText: { color: "white", fontSize: 16, fontWeight: "700" },
+
   smallButton: {
-    marginTop: 8,
-    padding: 8,
-    borderRadius: 10,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: "center",
     backgroundColor: "#2b2b2b",
   },
-  smallButtonText: { color: "white" },
+  smallButtonText: { color: "white", fontSize: 13, fontWeight: "600" },
 });

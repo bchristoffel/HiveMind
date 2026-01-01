@@ -4,7 +4,7 @@ import { useNotesContext } from "../../context/NotesContext";
 
 export default function NoteDetailScreen({ route, navigation }: any) {
   const { noteId } = route.params ?? {};
-  const { getNoteById, updateNoteText, deleteNote } = useNotesContext();
+  const { getNoteById, updateNoteText, deleteNote, processNote, isProcessing } = useNotesContext();
 
   const note = useMemo(() => (noteId ? getNoteById(noteId) : undefined), [noteId, getNoteById]);
   const [draft, setDraft] = useState(note?.rawText ?? "");
@@ -23,6 +23,7 @@ export default function NoteDetailScreen({ route, navigation }: any) {
   }
 
   const hasChanges = draft.trim() !== note.rawText.trim();
+  const processing = isProcessing(note.id);
 
   const onSave = () => {
     if (!hasChanges) return;
@@ -44,15 +45,26 @@ export default function NoteDetailScreen({ route, navigation }: any) {
     ]);
   };
 
+  const onProcess = async () => {
+    await processNote(note.id);
+    Alert.alert("Processed", "Title/tags/people have been extracted (mock).");
+  };
+
   return (
     <View style={styles.screen}>
-      {/* Smart Header (HUD placeholder) */}
+      {/* Smart Header (HUD) */}
       <View style={styles.hud}>
-        <Text style={styles.hudTitle}>Smart Header</Text>
-        <Text style={styles.hudLine}>Status: {note.status}</Text>
+        <Text style={styles.hudTitle}>{note.title ?? "Smart Header"}</Text>
+
+        <View style={styles.hudRow}>
+          <Text style={styles.hudLine}>Status: {note.status}</Text>
+          {processing ? <Text style={styles.processing}>Processing…</Text> : null}
+        </View>
+
         <Text style={styles.hudLine}>Created: {new Date(note.createdAt).toLocaleString()}</Text>
         <Text style={styles.hudLine}>Updated: {new Date(note.updatedAt).toLocaleString()}</Text>
         <Text style={styles.hudLine}>Linked event: {note.linkedEventId ?? "—"}</Text>
+
         <Text style={styles.hudLine}>
           Tags: {note.tags.length ? note.tags.map((t) => `#${t}`).join(" ") : "—"}
         </Text>
@@ -83,6 +95,16 @@ export default function NoteDetailScreen({ route, navigation }: any) {
           <Text style={styles.buttonText}>Save</Text>
         </Pressable>
 
+        <Pressable
+          style={[styles.button, processing && styles.buttonDisabled]}
+          onPress={onProcess}
+          disabled={processing}
+        >
+          <Text style={styles.buttonText}>Process</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.row}>
         <Pressable style={[styles.button, styles.deleteButton]} onPress={onDelete}>
           <Text style={styles.buttonText}>Delete</Text>
         </Pressable>
@@ -92,44 +114,17 @@ export default function NoteDetailScreen({ route, navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    padding: 16,
-    gap: 12,
-    backgroundColor: "#121212",
-  },
-  title: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "800",
-    marginTop: 8,
-  },
-  meta: {
-    color: "#bdbdbd",
-    marginTop: 6,
-  },
-  hud: {
-    backgroundColor: "#1E1E1E",
-    borderRadius: 16,
-    padding: 12,
-    gap: 6,
-  },
-  hudTitle: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "800",
-    marginBottom: 2,
-  },
-  hudLine: {
-    color: "#bdbdbd",
-    fontSize: 12,
-  },
-  editorCard: {
-    flex: 1,
-    backgroundColor: "#1E1E1E",
-    borderRadius: 16,
-    padding: 12,
-  },
+  screen: { flex: 1, padding: 16, gap: 12, backgroundColor: "#121212" },
+  title: { color: "white", fontSize: 18, fontWeight: "800", marginTop: 8 },
+  meta: { color: "#bdbdbd", marginTop: 6 },
+
+  hud: { backgroundColor: "#1E1E1E", borderRadius: 16, padding: 12, gap: 6 },
+  hudTitle: { color: "white", fontSize: 14, fontWeight: "800", marginBottom: 2 },
+  hudRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  hudLine: { color: "#bdbdbd", fontSize: 12 },
+  processing: { color: "#F97316", fontSize: 12, fontWeight: "800" },
+
+  editorCard: { flex: 1, backgroundColor: "#1E1E1E", borderRadius: 16, padding: 12 },
   editor: {
     flex: 1,
     color: "white",
@@ -137,10 +132,8 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     textAlignVertical: "top",
   },
-  row: {
-    flexDirection: "row",
-    gap: 10,
-  },
+
+  row: { flexDirection: "row", gap: 10 },
   button: {
     flex: 1,
     borderRadius: 14,
@@ -148,15 +141,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#3B82F6",
   },
-  deleteButton: {
-    backgroundColor: "#2b2b2b",
-  },
-  buttonDisabled: {
-    opacity: 0.45,
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "700",
-  },
+  deleteButton: { backgroundColor: "#2b2b2b" },
+  buttonDisabled: { opacity: 0.45 },
+  buttonText: { color: "white", fontSize: 16, fontWeight: "700" },
 });
