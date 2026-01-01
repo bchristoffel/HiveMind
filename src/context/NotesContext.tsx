@@ -2,6 +2,9 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Note } from "../domain/types";
 import { loadNotes, saveNotes } from "../storage/notesStore";
 import { analyzeNoteMock } from "../services/ai/analyzeNote";
+import { TaskProposal } from "../domain/taskProposals";
+import { extractTaskProposalsMock } from "../services/ai/extractTasks";
+import { createTask } from "../storage/tasksStore";
 
 type NotesContextType = {
   notes: Note[];
@@ -16,6 +19,12 @@ type NotesContextType = {
 
   processNote: (noteId: string) => Promise<void>;
   isProcessing: (noteId: string) => boolean;
+
+  // Task proposals
+  getTaskProposalsForNote: (noteId: string) => TaskProposal[];
+  acceptTaskProposal: (noteId: string, proposalId: string) => Promise<void>;
+  dismissTaskProposal: (noteId: string, proposalId: string) => void;
+  clearTaskProposals: (noteId: string) => void;
 };
 
 const NotesContext = createContext<NotesContextType | null>(null);
@@ -29,6 +38,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [processingIds, setProcessingIds] = useState<string[]>([]);
+
+  // proposals are temporary and local (Stage 4/Sync can persist them)
+  const [taskProposalsByNoteId, setTaskProposalsByNoteId] = useState<Record<string, TaskProposal[]>>(
+    {}
+  );
 
   // Load once
   useEffect(() => {
@@ -85,22 +99,36 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               ...n,
               rawText: trimmed,
               updatedAt: Date.now(),
-              // If user edits a processed note, treat as draft again (so it can be re-processed)
               status: "draft",
             }
           : n
       )
     );
+
+    // If user edits note, clear old task proposals (so we don’t suggest stale actions)
+    setTaskProposalsByNoteId((prev) => {
+      if (!prev[noteId]) return prev;
+      const next = { ...prev };
+      delete next[noteId];
+      return next;
+    });
   };
 
   const deleteNote = (noteId: string) => {
     setNotes((prev) => prev.filter((n) => n.id !== noteId));
     setProcessingIds((prev) => prev.filter((id) => id !== noteId));
+    setTaskProposalsByNoteId((prev) => {
+      if (!prev[noteId]) return prev;
+      const next = { ...prev };
+      delete next[noteId];
+      return next;
+    });
   };
 
   const clearAll = () => {
     setNotes([]);
     setProcessingIds([]);
+    setTaskProposalsByNoteId({});
   };
 
   const getNoteById = useMemo(() => {
@@ -118,7 +146,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setProcessingIds((prev) => [noteId, ...prev]);
 
     try {
-      // MOCK for now. Later: replace analyzeNoteMock(...) with OpenAI call.
+      // 1) “AI” analysis (mock) for title/tags/people
       const result = await analyzeNoteMock(note.rawText);
 
       setNotes((prev) =>
@@ -135,11 +163,57 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             : n
         )
       );
+
+      // 2) Task proposals (mock extraction)
+      const proposals = await extractTaskProposalsMock({
+        rawText: note.rawText,
+        sourceNoteId: noteId,
+      });
+
+      setTaskProposalsByNoteId((prev) => ({
+        ...prev,
+        [noteId]: proposals,
+      }));
     } catch (err) {
       console.warn("Failed to process note:", err);
     } finally {
       setProcessingIds((prev) => prev.filter((id) => id !== noteId));
     }
+  };
+
+  const getTaskProposalsForNote = (noteId: string) => taskProposalsByNoteId[noteId] ?? [];
+
+  const dismissTaskProposal = (noteId: string, proposalId: string) => {
+    setTaskProposalsByNoteId((prev) => {
+      const current = prev[noteId] ?? [];
+      const nextForNote = current.filter((p) => p.id !== proposalId);
+      return { ...prev, [noteId]: nextForNote };
+    });
+  };
+
+  const clearTaskProposals = (noteId: string) => {
+    setTaskProposalsByNoteId((prev) => {
+      if (!prev[noteId]) return prev;
+      return { ...prev, [noteId]: [] };
+    });
+  };
+
+  const acceptTaskProposal = async (noteId: string, proposalId: string) => {
+    const proposals = getTaskProposalsForNote(noteId);
+    const proposal = proposals.find((p) => p.id === proposalId);
+    if (!proposal) return;
+
+    // Create real task in SQLite
+    await createTask({
+      title: proposal.title,
+      notes: proposal.notes,
+      dueAt: proposal.dueAt,
+      sourceNoteId: proposal.sourceNoteId,
+      priority: proposal.priority,
+    });
+
+    // Remove proposal after acceptance
+    dismissTaskProposal(noteId, proposalId);
   };
 
   return (
@@ -154,6 +228,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         getNoteById,
         processNote,
         isProcessing,
+        getTaskProposalsForNote,
+        acceptTaskProposal,
+        dismissTaskProposal,
+        clearTaskProposals,
       }}
     >
       {children}
