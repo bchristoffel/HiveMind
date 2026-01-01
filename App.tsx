@@ -7,6 +7,7 @@ import { StatusBar } from "expo-status-bar";
 import { NotesProvider } from "./src/context/NotesContext";
 import { DashboardScreen, TimelineScreen, NoteDetailScreen } from "./src/features/notes";
 import { TasksScreen } from "./src/features/tasks";
+import { ImportScreen } from "./src/features/import";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -24,6 +25,7 @@ function Tabs() {
       <Tab.Screen name="Dashboard" component={DashboardScreen} />
       <Tab.Screen name="Timeline" component={TimelineScreen} />
       <Tab.Screen name="Tasks" component={TasksScreen} />
+      <Tab.Screen name="Import" component={ImportScreen} />
     </Tab.Navigator>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useNotesContext } from "../../context/NotesContext";
+import dayjs from "dayjs";
 
 export default function NoteDetailScreen({ route, navigation }: any) {
   const { noteId } = route.params ?? {};
@@ -14,6 +15,8 @@ export default function NoteDetailScreen({ route, navigation }: any) {
     acceptTaskProposal,
     dismissTaskProposal,
     clearTaskProposals,
+    getLinkedEventForNote,
+    getContactMatchesForNote,
   } = useNotesContext();
 
   const note = useMemo(() => (noteId ? getNoteById(noteId) : undefined), [noteId, getNoteById]);
@@ -23,8 +26,18 @@ export default function NoteDetailScreen({ route, navigation }: any) {
     setDraft(note?.rawText ?? "");
   }, [note?.rawText]);
 
-  const proposals = useMemo(() => (noteId ? getTaskProposalsForNote(noteId) : []), [noteId, getTaskProposalsForNote]);
+  const proposals = useMemo(
+    () => (noteId ? getTaskProposalsForNote(noteId) : []),
+    [noteId, getTaskProposalsForNote]
+  );
+
   const processing = note ? isProcessing(note.id) : false;
+
+  const linkedEvent = useMemo(() => (noteId ? getLinkedEventForNote(noteId) : null), [noteId, getLinkedEventForNote]);
+  const contactMatches = useMemo(
+    () => (noteId ? getContactMatchesForNote(noteId) : []),
+    [noteId, getContactMatchesForNote]
+  );
 
   if (!note) {
     return (
@@ -77,10 +90,24 @@ export default function NoteDetailScreen({ route, navigation }: any) {
         <Text style={styles.hudLine}>Updated: {new Date(note.updatedAt).toLocaleString()}</Text>
 
         <Text style={styles.hudLine}>
+          Linked event:{" "}
+          {linkedEvent
+            ? `${dayjs(linkedEvent.startDate).format("h:mm A")}–${dayjs(linkedEvent.endDate).format("h:mm A")} • ${linkedEvent.title}`
+            : note.linkedEventId
+            ? `Event ID: ${note.linkedEventId}`
+            : "—"}
+        </Text>
+
+        <Text style={styles.hudLine}>
           Tags: {note.tags.length ? note.tags.map((t) => `#${t}`).join(" ") : "—"}
         </Text>
         <Text style={styles.hudLine}>
           People: {note.people.length ? note.people.join(", ") : "—"}
+        </Text>
+
+        <Text style={styles.hudLine}>
+          Contacts:{" "}
+          {contactMatches.length ? contactMatches.map((c) => c.displayName).join(", ") : "—"}
         </Text>
       </View>
 
@@ -146,19 +173,11 @@ export default function NoteDetailScreen({ route, navigation }: any) {
 
       {/* Actions */}
       <View style={styles.row}>
-        <Pressable
-          style={[styles.button, !hasChanges && styles.buttonDisabled]}
-          onPress={onSave}
-          disabled={!hasChanges}
-        >
+        <Pressable style={[styles.button, !hasChanges && styles.buttonDisabled]} onPress={onSave} disabled={!hasChanges}>
           <Text style={styles.buttonText}>Save</Text>
         </Pressable>
 
-        <Pressable
-          style={[styles.button, processing && styles.buttonDisabled]}
-          onPress={onProcess}
-          disabled={processing}
-        >
+        <Pressable style={[styles.button, processing && styles.buttonDisabled]} onPress={onProcess} disabled={processing}>
           <Text style={styles.buttonText}>Process</Text>
         </Pressable>
       </View>
@@ -204,24 +223,12 @@ const styles = StyleSheet.create({
 
   row: { flexDirection: "row", gap: 10 },
 
-  button: {
-    flex: 1,
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: "center",
-    backgroundColor: "#3B82F6",
-  },
+  button: { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: "center", backgroundColor: "#3B82F6" },
   deleteButton: { backgroundColor: "#2b2b2b" },
   buttonDisabled: { opacity: 0.45 },
   buttonText: { color: "white", fontSize: 16, fontWeight: "700" },
 
-  pill: {
-    borderRadius: 999,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: "#2b2b2b",
-    alignItems: "center",
-  },
+  pill: { borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: "#2b2b2b", alignItems: "center" },
   pillPrimary: { backgroundColor: "#3B82F6" },
   pillText: { color: "white", fontSize: 12, fontWeight: "800" },
 });

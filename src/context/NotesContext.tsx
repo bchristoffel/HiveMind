@@ -1,16 +1,22 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Note } from "../domain/types";
+import { Note, NoteSource } from "../domain/types";
 import { loadNotes, saveNotes } from "../storage/notesStore";
 import { analyzeNoteMock } from "../services/ai/analyzeNote";
 import { TaskProposal } from "../domain/taskProposals";
 import { extractTaskProposalsMock } from "../services/ai/extractTasks";
 import { createTask } from "../storage/tasksStore";
+import { AppleCalendarEvent } from "../domain/apple/calendar";
+import { AppleContactMatch } from "../domain/apple/contacts";
+import { getCurrentEventFrom, getEventsForDay } from "../services/apple/calendar";
+import { findBestContactByName } from "../services/apple/contacts";
 
 type NotesContextType = {
   notes: Note[];
   hydrated: boolean;
 
-  addNote: (text: string) => void;
+  addNote: (text: string) => Promise<string | null>;
+  addImportedNote: (text: string, source: "text" | "email" | "message" | "note" | "web") => string;
+
   updateNoteText: (noteId: string, newText: string) => void;
   deleteNote: (noteId: string) => void;
   clearAll: () => void;
@@ -25,6 +31,10 @@ type NotesContextType = {
   acceptTaskProposal: (noteId: string, proposalId: string) => Promise<void>;
   dismissTaskProposal: (noteId: string, proposalId: string) => void;
   clearTaskProposals: (noteId: string) => void;
+
+  // Apple context/cache
+  getLinkedEventForNote: (noteId: string) => AppleCalendarEvent | null;
+  getContactMatchesForNote: (noteId: string) => AppleContactMatch[];
 };
 
 const NotesContext = createContext<NotesContextType | null>(null);
@@ -34,13 +44,37 @@ function makeId() {
   return c?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function mapImportSource(s: "text" | "email" | "message" | "note" | "web"): NoteSource {
+  switch (s) {
+    case "email":
+      return "import_email";
+    case "message":
+      return "import_message";
+    case "note":
+      return "import_note";
+    case "web":
+      return "import_web";
+    default:
+      return "import_text";
+  }
+}
+
 export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [processingIds, setProcessingIds] = useState<string[]>([]);
 
-  // proposals are temporary and local (Stage 4/Sync can persist them)
   const [taskProposalsByNoteId, setTaskProposalsByNoteId] = useState<Record<string, TaskProposal[]>>(
+    {}
+  );
+
+  // Cache: noteId -> linked AppleCalendarEvent (best effort)
+  const [linkedEventsByNoteId, setLinkedEventsByNoteId] = useState<Record<string, AppleCalendarEvent>>(
+    {}
+  );
+
+  // Cache: noteId -> contact matches for extracted people
+  const [contactMatchesByNoteId, setContactMatchesByNoteId] = useState<Record<string, AppleContactMatch[]>>(
     {}
   );
 
@@ -70,22 +104,75 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [notes, hydrated]);
 
-  const addNote = (text: string) => {
+  const getNoteById = useMemo(() => {
+    const map = new Map(notes.map((n) => [n.id, n]));
+    return (noteId: string) => map.get(noteId);
+  }, [notes]);
+
+  const isProcessing = (noteId: string) => processingIds.includes(noteId);
+
+  async function tryLinkCurrentMeeting(noteId: string) {
+    try {
+      const events = await getEventsForDay(new Date());
+      const current = getCurrentEventFrom(events, Date.now());
+      if (!current) return;
+
+      // set on the note
+      setNotes((prev) =>
+        prev.map((n) => (n.id === noteId ? { ...n, linkedEventId: current.id } : n))
+      );
+
+      // cache the event for UI
+      setLinkedEventsByNoteId((prev) => ({ ...prev, [noteId]: current }));
+    } catch (e) {
+      // silent (web/no perms/etc)
+    }
+  }
+
+  const addNote = async (text: string): Promise<string | null> => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return null;
 
     const now = Date.now();
+    const id = makeId();
+
     const newNote: Note = {
-      id: makeId(),
+      id,
       createdAt: now,
       updatedAt: now,
       rawText: trimmed,
       tags: [],
       people: [],
       status: "draft",
+      source: "capture",
     };
 
     setNotes((prev) => [newNote, ...prev]);
+
+    // Best-effort: link to current meeting (iOS only; no-op on web)
+    tryLinkCurrentMeeting(id);
+
+    return id;
+  };
+
+  const addImportedNote = (text: string, source: "text" | "email" | "message" | "note" | "web"): string => {
+    const trimmed = text.trim();
+    const now = Date.now();
+    const id = makeId();
+
+    const newNote: Note = {
+      id,
+      createdAt: now,
+      updatedAt: now,
+      rawText: trimmed,
+      tags: [],
+      people: [],
+      status: "draft",
+      source: mapImportSource(source),
+    };
+
+    setNotes((prev) => [newNote, ...prev]);
+    return id;
   };
 
   const updateNoteText = (noteId: string, newText: string) => {
@@ -95,18 +182,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setNotes((prev) =>
       prev.map((n) =>
         n.id === noteId
-          ? {
-              ...n,
-              rawText: trimmed,
-              updatedAt: Date.now(),
-              status: "draft",
-            }
+          ? { ...n, rawText: trimmed, updatedAt: Date.now(), status: "draft" }
           : n
       )
     );
 
-    // If user edits note, clear old task proposals (so we don’t suggest stale actions)
+    // Clear proposals + contact matches because note content changed
     setTaskProposalsByNoteId((prev) => {
+      if (!prev[noteId]) return prev;
+      const next = { ...prev };
+      delete next[noteId];
+      return next;
+    });
+
+    setContactMatchesByNoteId((prev) => {
       if (!prev[noteId]) return prev;
       const next = { ...prev };
       delete next[noteId];
@@ -117,7 +206,22 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const deleteNote = (noteId: string) => {
     setNotes((prev) => prev.filter((n) => n.id !== noteId));
     setProcessingIds((prev) => prev.filter((id) => id !== noteId));
+
     setTaskProposalsByNoteId((prev) => {
+      if (!prev[noteId]) return prev;
+      const next = { ...prev };
+      delete next[noteId];
+      return next;
+    });
+
+    setLinkedEventsByNoteId((prev) => {
+      if (!prev[noteId]) return prev;
+      const next = { ...prev };
+      delete next[noteId];
+      return next;
+    });
+
+    setContactMatchesByNoteId((prev) => {
       if (!prev[noteId]) return prev;
       const next = { ...prev };
       delete next[noteId];
@@ -129,14 +233,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setNotes([]);
     setProcessingIds([]);
     setTaskProposalsByNoteId({});
+    setLinkedEventsByNoteId({});
+    setContactMatchesByNoteId({});
   };
-
-  const getNoteById = useMemo(() => {
-    const map = new Map(notes.map((n) => [n.id, n]));
-    return (noteId: string) => map.get(noteId);
-  }, [notes]);
-
-  const isProcessing = (noteId: string) => processingIds.includes(noteId);
 
   const processNote = async (noteId: string) => {
     const note = getNoteById(noteId);
@@ -174,6 +273,19 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         ...prev,
         [noteId]: proposals,
       }));
+
+      // 3) Contacts linking (best effort, iOS only). We match @handles to contacts.
+      const people = result.people ?? [];
+      if (people.length) {
+        const matches: AppleContactMatch[] = [];
+        for (const p of people) {
+          const m = await findBestContactByName(p);
+          if (m) matches.push(m);
+        }
+        if (matches.length) {
+          setContactMatchesByNoteId((prev) => ({ ...prev, [noteId]: matches }));
+        }
+      }
     } catch (err) {
       console.warn("Failed to process note:", err);
     } finally {
@@ -192,10 +304,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   };
 
   const clearTaskProposals = (noteId: string) => {
-    setTaskProposalsByNoteId((prev) => {
-      if (!prev[noteId]) return prev;
-      return { ...prev, [noteId]: [] };
-    });
+    setTaskProposalsByNoteId((prev) => ({ ...prev, [noteId]: [] }));
   };
 
   const acceptTaskProposal = async (noteId: string, proposalId: string) => {
@@ -203,7 +312,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     const proposal = proposals.find((p) => p.id === proposalId);
     if (!proposal) return;
 
-    // Create real task in SQLite
     await createTask({
       title: proposal.title,
       notes: proposal.notes,
@@ -212,9 +320,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       priority: proposal.priority,
     });
 
-    // Remove proposal after acceptance
     dismissTaskProposal(noteId, proposalId);
   };
+
+  const getLinkedEventForNote = (noteId: string) => linkedEventsByNoteId[noteId] ?? null;
+  const getContactMatchesForNote = (noteId: string) => contactMatchesByNoteId[noteId] ?? [];
 
   return (
     <NotesContext.Provider
@@ -222,6 +332,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         notes,
         hydrated,
         addNote,
+        addImportedNote,
         updateNoteText,
         deleteNote,
         clearAll,
@@ -232,6 +343,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         acceptTaskProposal,
         dismissTaskProposal,
         clearTaskProposals,
+        getLinkedEventForNote,
+        getContactMatchesForNote,
       }}
     >
       {children}

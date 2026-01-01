@@ -1,4 +1,5 @@
 export type NoteStatus = "draft" | "processed";
+export type NoteSource = "capture" | "import_text" | "import_email" | "import_message" | "import_note" | "import_web" | "import_other";
 
 export type Note = {
   id: string;
@@ -7,12 +8,15 @@ export type Note = {
 
   rawText: string;
 
-  // AI-enriched fields (Phase 3+)
+  // AI-enriched fields
   title?: string;
   tags: string[];
   people: string[];
   status: NoteStatus;
 
-  // Future: calendar linking
+  // Calendar linking
   linkedEventId?: string;
+
+  // Where it came from
+  source?: NoteSource;
 };

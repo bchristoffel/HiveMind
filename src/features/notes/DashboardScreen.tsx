@@ -1,14 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useNotesContext } from "../../context/NotesContext";
 import { useTasks } from "../../storage/useTasks";
 import { getTopPriorities } from "../../services/prioritization/score";
+import { getEventsForDay, getNextEventFrom } from "../../services/apple/calendar";
+import dayjs from "dayjs";
 
 export default function DashboardScreen({ navigation }: any) {
   const { addNote, clearAll, notes, processNote } = useNotesContext();
   const { tasks, hydrated: tasksHydrated, refresh: refreshTasks } = useTasks();
 
   const [text, setText] = useState("");
+  const [nextMeeting, setNextMeeting] = useState<{ title: string; time: string } | null>(null);
 
   const canSave = useMemo(() => text.trim().length > 0, [text]);
 
@@ -18,10 +21,30 @@ export default function DashboardScreen({ navigation }: any) {
     return getTopPriorities({ tasks, notes, maxItems: 3 });
   }, [tasks, notes]);
 
-  const onSave = () => {
+  useEffect(() => {
+    (async () => {
+      try {
+        const events = await getEventsForDay(new Date());
+        const next = getNextEventFrom(events, Date.now());
+        if (!next) {
+          setNextMeeting(null);
+          return;
+        }
+        setNextMeeting({
+          title: next.title,
+          time: `${dayjs(next.startDate).format("h:mm A")}–${dayjs(next.endDate).format("h:mm A")}`,
+        });
+      } catch {
+        setNextMeeting(null);
+      }
+    })();
+  }, []);
+
+  const onSave = async () => {
     if (!canSave) return;
-    addNote(text);
+    const id = await addNote(text);
     setText("");
+    if (id) navigation.navigate("NoteDetail", { noteId: id });
   };
 
   const onProcessLatest = async () => {
@@ -46,7 +69,14 @@ export default function DashboardScreen({ navigation }: any) {
           </Pressable>
         </View>
 
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: 8 }}>
+          <Text style={styles.sectionTitle}>Next Meeting</Text>
+          <Text style={styles.muted}>
+            {nextMeeting ? `${nextMeeting.time} • ${nextMeeting.title}` : "No meeting detected (or permissions not granted)."}
+          </Text>
+        </View>
+
+        <View style={{ gap: 10, marginTop: 6 }}>
           <Text style={styles.sectionTitle}>Top Priorities</Text>
 
           {priorities.length === 0 ? (
@@ -85,6 +115,10 @@ export default function DashboardScreen({ navigation }: any) {
             <Text style={styles.smallButtonText}>Process Latest Draft</Text>
           </Pressable>
 
+          <Pressable style={styles.smallButton} onPress={() => navigation.navigate("Import")}>
+            <Text style={styles.smallButtonText}>Import</Text>
+          </Pressable>
+
           <Pressable style={styles.smallButton} onPress={clearAll}>
             <Text style={styles.smallButtonText}>Clear Notes</Text>
           </Pressable>
@@ -104,11 +138,7 @@ export default function DashboardScreen({ navigation }: any) {
           style={styles.input}
         />
 
-        <Pressable
-          style={[styles.button, !canSave && styles.buttonDisabled]}
-          onPress={onSave}
-          disabled={!canSave}
-        >
+        <Pressable style={[styles.button, !canSave && styles.buttonDisabled]} onPress={onSave} disabled={!canSave}>
           <Text style={styles.buttonText}>Save</Text>
         </Pressable>
       </View>
@@ -137,12 +167,7 @@ const styles = StyleSheet.create({
   priorityTitle: { color: "white", fontSize: 14, fontWeight: "700" },
   priorityMeta: { color: "#9aa0a6", fontSize: 12, marginTop: 4 },
 
-  badge: {
-    backgroundColor: "#2b2b2b",
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
+  badge: { backgroundColor: "#2b2b2b", borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10 },
   badgeText: { color: "white", fontSize: 11, fontWeight: "900" },
 
   row: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
@@ -166,12 +191,7 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
   },
 
-  button: {
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: "center",
-    backgroundColor: "#3B82F6",
-  },
+  button: { borderRadius: 14, paddingVertical: 14, alignItems: "center", backgroundColor: "#3B82F6" },
   buttonDisabled: { opacity: 0.45 },
   buttonText: { color: "white", fontSize: 16, fontWeight: "800" },
 });
