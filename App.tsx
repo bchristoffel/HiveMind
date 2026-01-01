@@ -8,6 +8,7 @@ import { NotesProvider } from "./src/context/NotesContext";
 import { DashboardScreen, TimelineScreen, NoteDetailScreen } from "./src/features/notes";
 import { TasksScreen } from "./src/features/tasks";
 import { ImportScreen } from "./src/features/import";
+import { DrawScreen } from "./src/features/draw";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -44,6 +45,7 @@ export default function App() {
         >
           <Stack.Screen name="Home" component={Tabs} options={{ headerShown: false }} />
           <Stack.Screen name="NoteDetail" component={NoteDetailScreen} options={{ title: "Note" }} />
+          <Stack.Screen name="Draw" component={DrawScreen} options={{ title: "Handwrite" }} />
         </Stack.Navigator>
       </NavigationContainer>
     </NotesProvider>

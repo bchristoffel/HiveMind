@@ -9,6 +9,7 @@ import { AppleCalendarEvent } from "../domain/apple/calendar";
 import { AppleContactMatch } from "../domain/apple/contacts";
 import { getCurrentEventFrom, getEventsForDay } from "../services/apple/calendar";
 import { findBestContactByName } from "../services/apple/contacts";
+import { NoteAttachment } from "../domain/attachments/types";
 
 type NotesContextType = {
   notes: Note[];
@@ -35,6 +36,10 @@ type NotesContextType = {
   // Apple context/cache
   getLinkedEventForNote: (noteId: string) => AppleCalendarEvent | null;
   getContactMatchesForNote: (noteId: string) => AppleContactMatch[];
+
+  // Attachments
+  addAttachmentToNote: (noteId: string, attachment: NoteAttachment) => void;
+  removeAttachmentFromNote: (noteId: string, attachmentId: string) => void;
 };
 
 const NotesContext = createContext<NotesContextType | null>(null);
@@ -68,12 +73,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     {}
   );
 
-  // Cache: noteId -> linked AppleCalendarEvent (best effort)
   const [linkedEventsByNoteId, setLinkedEventsByNoteId] = useState<Record<string, AppleCalendarEvent>>(
     {}
   );
 
-  // Cache: noteId -> contact matches for extracted people
   const [contactMatchesByNoteId, setContactMatchesByNoteId] = useState<Record<string, AppleContactMatch[]>>(
     {}
   );
@@ -117,15 +120,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const current = getCurrentEventFrom(events, Date.now());
       if (!current) return;
 
-      // set on the note
       setNotes((prev) =>
         prev.map((n) => (n.id === noteId ? { ...n, linkedEventId: current.id } : n))
       );
 
-      // cache the event for UI
       setLinkedEventsByNoteId((prev) => ({ ...prev, [noteId]: current }));
-    } catch (e) {
-      // silent (web/no perms/etc)
+    } catch {
+      // silent
     }
   }
 
@@ -145,13 +146,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       people: [],
       status: "draft",
       source: "capture",
+      attachments: [],
     };
 
     setNotes((prev) => [newNote, ...prev]);
-
-    // Best-effort: link to current meeting (iOS only; no-op on web)
     tryLinkCurrentMeeting(id);
-
     return id;
   };
 
@@ -169,6 +168,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       people: [],
       status: "draft",
       source: mapImportSource(source),
+      attachments: [],
     };
 
     setNotes((prev) => [newNote, ...prev]);
@@ -181,13 +181,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
     setNotes((prev) =>
       prev.map((n) =>
-        n.id === noteId
-          ? { ...n, rawText: trimmed, updatedAt: Date.now(), status: "draft" }
-          : n
+        n.id === noteId ? { ...n, rawText: trimmed, updatedAt: Date.now(), status: "draft" } : n
       )
     );
 
-    // Clear proposals + contact matches because note content changed
     setTaskProposalsByNoteId((prev) => {
       if (!prev[noteId]) return prev;
       const next = { ...prev };
@@ -201,6 +198,30 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       delete next[noteId];
       return next;
     });
+  };
+
+  const addAttachmentToNote = (noteId: string, attachment: NoteAttachment) => {
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id !== noteId) return n;
+        const attachments = n.attachments ?? [];
+        return {
+          ...n,
+          attachments: [attachment, ...attachments],
+          updatedAt: Date.now(),
+        };
+      })
+    );
+  };
+
+  const removeAttachmentFromNote = (noteId: string, attachmentId: string) => {
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id !== noteId) return n;
+        const attachments = (n.attachments ?? []).filter((a) => a.id !== attachmentId);
+        return { ...n, attachments, updatedAt: Date.now() };
+      })
+    );
   };
 
   const deleteNote = (noteId: string) => {
@@ -245,7 +266,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setProcessingIds((prev) => [noteId, ...prev]);
 
     try {
-      // 1) “AI” analysis (mock) for title/tags/people
       const result = await analyzeNoteMock(note.rawText);
 
       setNotes((prev) =>
@@ -263,27 +283,23 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         )
       );
 
-      // 2) Task proposals (mock extraction)
       const proposals = await extractTaskProposalsMock({
         rawText: note.rawText,
         sourceNoteId: noteId,
       });
 
-      setTaskProposalsByNoteId((prev) => ({
-        ...prev,
-        [noteId]: proposals,
-      }));
+      setTaskProposalsByNoteId((prev) => ({ ...prev, [noteId]: proposals }));
 
-      // 3) Contacts linking (best effort, iOS only). We match @handles to contacts.
       const people = result.people ?? [];
       if (people.length) {
-        const matches: AppleContactMatch[] = [];
+        const matches: NoteAttachment[] = [];
+        const contactMatches: AppleContactMatch[] = [];
         for (const p of people) {
           const m = await findBestContactByName(p);
-          if (m) matches.push(m);
+          if (m) contactMatches.push(m);
         }
-        if (matches.length) {
-          setContactMatchesByNoteId((prev) => ({ ...prev, [noteId]: matches }));
+        if (contactMatches.length) {
+          setContactMatchesByNoteId((prev) => ({ ...prev, [noteId]: contactMatches }));
         }
       }
     } catch (err) {
@@ -345,6 +361,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         clearTaskProposals,
         getLinkedEventForNote,
         getContactMatchesForNote,
+        addAttachmentToNote,
+        removeAttachmentFromNote,
       }}
     >
       {children}

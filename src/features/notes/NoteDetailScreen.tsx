@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useNotesContext } from "../../context/NotesContext";
 import dayjs from "dayjs";
+import { pickImageAttachment } from "../../services/attachments/image";
+import { playAudio, startVoiceRecording } from "../../services/attachments/audio";
+import { NoteAttachment } from "../../domain/attachments/types";
 
 export default function NoteDetailScreen({ route, navigation }: any) {
   const { noteId } = route.params ?? {};
@@ -17,6 +20,8 @@ export default function NoteDetailScreen({ route, navigation }: any) {
     clearTaskProposals,
     getLinkedEventForNote,
     getContactMatchesForNote,
+    addAttachmentToNote,
+    removeAttachmentFromNote,
   } = useNotesContext();
 
   const note = useMemo(() => (noteId ? getNoteById(noteId) : undefined), [noteId, getNoteById]);
@@ -26,11 +31,7 @@ export default function NoteDetailScreen({ route, navigation }: any) {
     setDraft(note?.rawText ?? "");
   }, [note?.rawText]);
 
-  const proposals = useMemo(
-    () => (noteId ? getTaskProposalsForNote(noteId) : []),
-    [noteId, getTaskProposalsForNote]
-  );
-
+  const proposals = useMemo(() => (noteId ? getTaskProposalsForNote(noteId) : []), [noteId, getTaskProposalsForNote]);
   const processing = note ? isProcessing(note.id) : false;
 
   const linkedEvent = useMemo(() => (noteId ? getLinkedEventForNote(noteId) : null), [noteId, getLinkedEventForNote]);
@@ -38,6 +39,13 @@ export default function NoteDetailScreen({ route, navigation }: any) {
     () => (noteId ? getContactMatchesForNote(noteId) : []),
     [noteId, getContactMatchesForNote]
   );
+
+  const attachments = note?.attachments ?? [];
+
+  // Audio playback
+  const soundRef = useRef<any>(null);
+  const [recordingHandle, setRecordingHandle] = useState<any>(null);
+  const [isRecording, setIsRecording] = useState(false);
 
   if (!note) {
     return (
@@ -75,6 +83,63 @@ export default function NoteDetailScreen({ route, navigation }: any) {
     Alert.alert("Processed", "Title/tags/people + task suggestions generated.");
   };
 
+  const onAddPhoto = async () => {
+    const att = await pickImageAttachment();
+    if (!att) {
+      Alert.alert("Photo not added", "Permission denied or canceled.");
+      return;
+    }
+    addAttachmentToNote(note.id, att);
+  };
+
+  const onToggleRecord = async () => {
+    if (isRecording && recordingHandle) {
+      const att = await recordingHandle.stop();
+      setRecordingHandle(null);
+      setIsRecording(false);
+
+      if (att) addAttachmentToNote(note.id, att);
+      return;
+    }
+
+    const handle = await startVoiceRecording();
+    if (!handle) {
+      Alert.alert("Voice recording unavailable", "Recording works on iOS/Android devices. Web is disabled.");
+      return;
+    }
+    setRecordingHandle(handle);
+    setIsRecording(true);
+  };
+
+  const onPlayAudio = async (uri: string) => {
+    // stop any prior
+    if (soundRef.current) {
+      try {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+      } catch {}
+      soundRef.current = null;
+    }
+
+    const s = await playAudio(uri);
+    if (!s) {
+      Alert.alert("Playback unavailable", "Audio playback is supported on device.");
+      return;
+    }
+    soundRef.current = s;
+  };
+
+  const onRemoveAttachment = (att: NoteAttachment) => {
+    Alert.alert("Remove attachment?", "This removes it from the note.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: () => removeAttachmentFromNote(note.id, att.id),
+      },
+    ]);
+  };
+
   return (
     <View style={styles.screen}>
       {/* HUD */}
@@ -98,17 +163,71 @@ export default function NoteDetailScreen({ route, navigation }: any) {
             : "—"}
         </Text>
 
+        <Text style={styles.hudLine}>Tags: {note.tags.length ? note.tags.map((t) => `#${t}`).join(" ") : "—"}</Text>
+        <Text style={styles.hudLine}>People: {note.people.length ? note.people.join(", ") : "—"}</Text>
         <Text style={styles.hudLine}>
-          Tags: {note.tags.length ? note.tags.map((t) => `#${t}`).join(" ") : "—"}
+          Contacts: {contactMatches.length ? contactMatches.map((c) => c.displayName).join(", ") : "—"}
         </Text>
-        <Text style={styles.hudLine}>
-          People: {note.people.length ? note.people.join(", ") : "—"}
-        </Text>
+      </View>
 
-        <Text style={styles.hudLine}>
-          Contacts:{" "}
-          {contactMatches.length ? contactMatches.map((c) => c.displayName).join(", ") : "—"}
-        </Text>
+      {/* Capture Inputs */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Capture Inputs</Text>
+        <View style={styles.row}>
+          <Pressable style={styles.pillPrimary} onPress={onAddPhoto}>
+            <Text style={styles.pillText}>Add Photo</Text>
+          </Pressable>
+
+          <Pressable style={[styles.pillPrimary, isRecording && { backgroundColor: "#F97316" }]} onPress={onToggleRecord}>
+            <Text style={styles.pillText}>{isRecording ? "Stop Recording" : "Record Voice"}</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.pillPrimary}
+            onPress={() => navigation.navigate("Draw", { noteId: note.id })}
+          >
+            <Text style={styles.pillText}>Handwrite</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Attachments */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Attachments</Text>
+        {attachments.length === 0 ? (
+          <Text style={styles.muted}>No attachments yet.</Text>
+        ) : (
+          <View style={{ gap: 10 }}>
+            {attachments.map((att) => (
+              <View key={att.id} style={styles.attachmentRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.attachmentTitle}>{att.kind.toUpperCase()}</Text>
+                  <Text style={styles.attachmentMeta}>
+                    {att.kind === "image"
+                      ? `${att.width ?? "?"}×${att.height ?? "?"}`
+                      : att.kind === "audio"
+                      ? `${Math.round((att.durationMs ?? 0) / 1000)}s`
+                      : `${att.strokes?.length ?? 0} stroke(s)`}
+                  </Text>
+                </View>
+
+                {att.kind === "image" && att.uri ? (
+                  <Image source={{ uri: att.uri }} style={styles.thumb} />
+                ) : null}
+
+                {att.kind === "audio" && att.uri ? (
+                  <Pressable style={styles.pill} onPress={() => onPlayAudio(att.uri!)}>
+                    <Text style={styles.pillText}>Play</Text>
+                  </Pressable>
+                ) : null}
+
+                <Pressable style={styles.pill} onPress={() => onRemoveAttachment(att)}>
+                  <Text style={styles.pillText}>Remove</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
       </View>
 
       {/* Task Suggestions */}
@@ -134,9 +253,7 @@ export default function NoteDetailScreen({ route, navigation }: any) {
               <View key={p.id} style={styles.taskRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.taskTitle}>{p.title}</Text>
-                  <Text style={styles.taskMeta}>
-                    {p.priority ? `Priority: ${p.priority.toUpperCase()}` : "Priority: —"}
-                  </Text>
+                  <Text style={styles.taskMeta}>{p.priority ? `Priority: ${p.priority.toUpperCase()}` : "Priority: —"}</Text>
                 </View>
 
                 <View style={{ gap: 8 }}>
@@ -218,10 +335,22 @@ const styles = StyleSheet.create({
   taskTitle: { color: "white", fontSize: 14, fontWeight: "700" },
   taskMeta: { color: "#9aa0a6", fontSize: 12, marginTop: 4 },
 
+  attachmentRow: {
+    backgroundColor: "#171717",
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  attachmentTitle: { color: "white", fontSize: 13, fontWeight: "800" },
+  attachmentMeta: { color: "#9aa0a6", fontSize: 12, marginTop: 4 },
+  thumb: { width: 44, height: 44, borderRadius: 10, backgroundColor: "#2b2b2b" },
+
   editorCard: { flex: 1, backgroundColor: "#1E1E1E", borderRadius: 16, padding: 12 },
   editor: { flex: 1, color: "white", fontSize: 16, lineHeight: 22, textAlignVertical: "top" },
 
-  row: { flexDirection: "row", gap: 10 },
+  row: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
 
   button: { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: "center", backgroundColor: "#3B82F6" },
   deleteButton: { backgroundColor: "#2b2b2b" },
@@ -229,6 +358,6 @@ const styles = StyleSheet.create({
   buttonText: { color: "white", fontSize: 16, fontWeight: "700" },
 
   pill: { borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: "#2b2b2b", alignItems: "center" },
-  pillPrimary: { backgroundColor: "#3B82F6" },
+  pillPrimary: { borderRadius: 999, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: "#3B82F6" },
   pillText: { color: "white", fontSize: 12, fontWeight: "800" },
 });
