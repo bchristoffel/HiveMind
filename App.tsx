@@ -6,6 +6,7 @@ import { StatusBar } from "expo-status-bar";
 
 import { NotesProvider } from "./src/context/NotesContext";
 import { DashboardScreen, TimelineScreen, NoteDetailScreen } from "./src/features/notes";
+import { TasksScreen } from "./src/features/tasks";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -15,16 +16,14 @@ function Tabs() {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarStyle: {
-          backgroundColor: "#121212",
-          borderTopColor: "#222",
-        },
+        tabBarStyle: { backgroundColor: "#121212", borderTopColor: "#222" },
         tabBarActiveTintColor: "#3B82F6",
         tabBarInactiveTintColor: "#9aa0a6",
       }}
     >
       <Tab.Screen name="Dashboard" component={DashboardScreen} />
       <Tab.Screen name="Timeline" component={TimelineScreen} />
+      <Tab.Screen name="Tasks" component={TasksScreen} />
     </Tab.Navigator>
   );
 }
@@ -42,7 +41,7 @@ export default function App() {
           }}
         >
           <Stack.Screen name="Home" component={Tabs} options={{ headerShown: false }} />
-          <Stack.Screen name="NoteDetail" component={NoteDetailScreen} />
+          <Stack.Screen name="NoteDetail" component={NoteDetailScreen} options={{ title: "Note" }} />
         </Stack.Navigator>
       </NavigationContainer>
     </NotesProvider>
