@@ -1,33 +1,28 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { useNotesContext } from "../../context/NotesContext";
 import dayjs from "dayjs";
+import { useMemo } from "react";
+import { useNotesContext } from "../../context/NotesContext";
+import { useTasks } from "../../storage/useTasks";
+import { buildTimelineStream } from "../../services/timeline/buildStream";
+import { TimelineItem } from "../../domain/timeline";
 
 type Section = {
   key: string;
   title: string;
-  notes: {
-    id: string;
-    createdAt: number;
-    updatedAt: number;
-    rawText: string;
-    status: string;
-  }[];
+  items: TimelineItem[];
 };
 
-function makeSections(notes: any[]): Section[] {
-  // Notes assumed newest-first; if not, sort them
-  const sorted = [...notes].sort((a, b) => b.createdAt - a.createdAt);
-
+function makeSections(items: TimelineItem[]): Section[] {
   const now = dayjs();
   const todayKey = now.format("YYYY-MM-DD");
   const yesterdayKey = now.subtract(1, "day").format("YYYY-MM-DD");
 
-  const buckets = new Map<string, any[]>();
+  const buckets = new Map<string, TimelineItem[]>();
 
-  for (const n of sorted) {
-    const key = dayjs(n.createdAt).format("YYYY-MM-DD");
+  for (const it of items) {
+    const key = dayjs(it.ts).format("YYYY-MM-DD");
     const arr = buckets.get(key) ?? [];
-    arr.push(n);
+    arr.push(it);
     buckets.set(key, arr);
   }
 
@@ -38,51 +33,105 @@ function makeSections(notes: any[]): Section[] {
     if (k === todayKey) title = "Today";
     if (k === yesterdayKey) title = "Yesterday";
 
-    return { key: k, title, notes: buckets.get(k) ?? [] };
+    return { key: k, title, items: buckets.get(k) ?? [] };
   });
 }
 
-export default function TimelineScreen({ navigation }: any) {
-  const { notes, hydrated } = useNotesContext();
+function kindLabel(kind: TimelineItem["kind"]) {
+  switch (kind) {
+    case "note":
+      return "NOTE";
+    case "task_created":
+      return "TASK";
+    case "task_completed":
+      return "DONE";
+    default:
+      return "ITEM";
+  }
+}
 
-  const sections = makeSections(notes);
+function kindColor(kind: TimelineItem["kind"]) {
+  // We aren’t setting fancy colors, just keeping simple with subtle differentiation
+  switch (kind) {
+    case "note":
+      return "#2b2b2b";
+    case "task_created":
+      return "#3B82F6";
+    case "task_completed":
+      return "#10B981";
+    default:
+      return "#2b2b2b";
+  }
+}
+
+export default function TimelineScreen({ navigation }: any) {
+  const { notes, hydrated: notesHydrated } = useNotesContext();
+  const { tasks, hydrated: tasksHydrated } = useTasks();
+
+  const stream = useMemo(() => buildTimelineStream({ notes, tasks }), [notes, tasks]);
+  const sections = useMemo(() => makeSections(stream), [stream]);
+
+  const hydrated = notesHydrated && tasksHydrated;
 
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>Timeline</Text>
-      <Text style={styles.subtitle}>A unified stream (Calendar + Tasks soon).</Text>
+      <Text style={styles.subtitle}>A unified stream (Notes + Tasks).</Text>
 
       <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 30 }}>
         {!hydrated ? (
           <Text style={styles.muted}>Loading…</Text>
-        ) : notes.length === 0 ? (
-          <Text style={styles.muted}>No notes yet. Capture something on the Dashboard.</Text>
+        ) : stream.length === 0 ? (
+          <Text style={styles.muted}>Nothing here yet. Add a note or task.</Text>
         ) : (
           sections.map((section) => (
             <View key={section.key} style={styles.section}>
               <Text style={styles.sectionTitle}>{section.title}</Text>
 
               <View style={styles.sectionStack}>
-                {section.notes.map((note) => {
-                  const time = dayjs(note.createdAt).format("h:mm A");
-                  const wasEdited = note.updatedAt !== note.createdAt;
+                {section.items.map((it) => {
+                  const time = dayjs(it.ts).format("h:mm A");
 
                   return (
                     <Pressable
-                      key={note.id}
-                      onPress={() => navigation.navigate("NoteDetail", { noteId: note.id })}
+                      key={it.id}
+                      onPress={() => {
+                        if (it.kind === "note" && it.noteId) {
+                          navigation.navigate("NoteDetail", { noteId: it.noteId });
+                          return;
+                        }
+                        // For tasks, send user to Tasks tab (where they can manage)
+                        navigation.navigate("Tasks");
+                      }}
                       style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}
                     >
                       <View style={styles.cardHeader}>
                         <Text style={styles.time}>{time}</Text>
-                        {wasEdited ? <Text style={styles.edited}>Updated</Text> : null}
+
+                        <View style={[styles.badge, { backgroundColor: kindColor(it.kind) }]}>
+                          <Text style={styles.badgeText}>{kindLabel(it.kind)}</Text>
+                        </View>
                       </View>
 
-                      <Text style={styles.text} numberOfLines={4}>
-                        {note.rawText}
+                      <Text style={styles.itemTitle} numberOfLines={2}>
+                        {it.title}
                       </Text>
 
-                      <Text style={styles.meta}>Status: {note.status}</Text>
+                      {it.subtitle ? (
+                        <Text style={styles.text} numberOfLines={2}>
+                          {it.subtitle}
+                        </Text>
+                      ) : null}
+
+                      {it.kind !== "note" && it.task?.sourceNoteId ? (
+                        <Text style={styles.meta} numberOfLines={1}>
+                          Linked to a note
+                        </Text>
+                      ) : (
+                        <Text style={styles.meta} numberOfLines={1}>
+                          {it.kind === "note" ? `Status: ${it.note?.status ?? "—"}` : `Status: ${it.task?.status ?? "—"}`}
+                        </Text>
+                      )}
                     </Pressable>
                   );
                 })}
@@ -111,8 +160,15 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
 
   time: { color: "#9aa0a6", fontSize: 12 },
-  edited: { color: "#10B981", fontSize: 12, fontWeight: "700" },
 
-  text: { color: "white", fontSize: 15, lineHeight: 20 },
-  meta: { color: "#bdbdbd", fontSize: 12 },
+  badge: {
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  badgeText: { color: "white", fontSize: 11, fontWeight: "900" },
+
+  itemTitle: { color: "white", fontSize: 15, fontWeight: "800", lineHeight: 20 },
+  text: { color: "#bdbdbd", fontSize: 13, lineHeight: 18 },
+  meta: { color: "#9aa0a6", fontSize: 12 },
 });
